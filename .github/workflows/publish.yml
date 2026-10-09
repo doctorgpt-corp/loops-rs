@@ -1,0 +1,193 @@
+name: Build and Publish to crates.io
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:  # Allow manual trigger
+
+# Serialize releases: two merges landing close together must not race, or the
+# second would compute its version before the first has pushed its tag.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # A manual dispatch on any other ref must not cut a release.
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write  # For creating releases
+      id-token: write  # For crates.io trusted publishing
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          # Full history + all tags: the tags are the record of what has been
+          # released, and the step below derives the next version from them.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compute release version
+        id: version
+        run: |
+          # The crate is versioned 0.MINOR.PATCH and the version is never
+          # committed back; the tags are the record. A new Loops API version
+          # (src/openapi.yaml info.version) or a commit marked breaking (`!` or
+          # a BREAKING CHANGE footer) bumps MINOR, which cargo treats as
+          # incompatible below 1.0. Anything else bumps PATCH.
+          api_of() { grep -m1 '^  version:' | awk '{print $2}'; }
+          API=$(api_of < src/openapi.yaml)
+          echo "api_version=$API" >> "$GITHUB_OUTPUT"
+
+          LAST=$(git tag --list 'v*' --sort=-v:refname | head -1)
+          if [ -z "$LAST" ]; then
+            NEW=$(grep -m1 '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            echo "No release tag yet - will publish $NEW"
+          else
+            LAST_API=$(git show "$LAST:src/openapi.yaml" | api_of)
+            IFS=. read -r MAJOR MINOR PATCH <<< "${LAST#v}"
+            BREAKING=""
+            if git log --format=%s "$LAST..HEAD" -- src/ Cargo.toml Cargo.lock | grep -qE '^[a-z]+(\([^)]*\))?!:' \
+              || git log --format=%b "$LAST..HEAD" -- src/ Cargo.toml Cargo.lock | grep -qE '^BREAKING[ -]CHANGE:'; then
+              BREAKING=yes
+            fi
+            if [ "$API" != "$LAST_API" ]; then
+              NEW="$MAJOR.$((MINOR + 1)).0"
+              REASON="Loops API $LAST_API -> $API"
+            elif [ -n "$BREAKING" ]; then
+              NEW="$MAJOR.$((MINOR + 1)).0"
+              REASON="breaking change since $LAST"
+            else
+              NEW="$MAJOR.$MINOR.$((PATCH + 1))"
+              REASON="compatible change since $LAST"
+            fi
+
+            # Release only when shipped code moved since the last tag. Merges that
+            # touch docs, tests, xtask/, .claude/ or .github/ alone must not cut one.
+            if [ -n "$(git diff --name-only "$LAST..HEAD" -- src/ Cargo.toml Cargo.lock)" ]; then
+              echo "should_publish=true" >> "$GITHUB_OUTPUT"
+              echo "Shipped code changed since $LAST ($REASON) - will publish $NEW"
+            else
+              echo "should_publish=false" >> "$GITHUB_OUTPUT"
+              echo "No change under src/, Cargo.toml or Cargo.lock since $LAST - nothing to publish"
+            fi
+          fi
+          echo "version=$NEW" >> "$GITHUB_OUTPUT"
+
+      - name: Show toolchain
+        if: steps.version.outputs.should_publish == 'true'
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Stamp version
+        if: steps.version.outputs.should_publish == 'true'
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Stamp the computed version into the runner's checkout only; nothing
+          # is committed back. The first `version =` line is [package].
+          sed -i "0,/^version = \".*\"/s//version = \"$NEW_VERSION\"/" Cargo.toml
+          grep -m1 '^version = ' Cargo.toml
+          # Refresh only this package's entry in Cargo.lock.
+          cargo update --workspace
+          cargo package --locked --allow-dirty
+          # Fail loudly rather than uploading a crate under the wrong version.
+          test -f "${CARGO_TARGET_DIR:-target}/package/loops-so-$NEW_VERSION.crate"
+
+      - name: Check whether this version is already on crates.io
+        id: exists
+        if: steps.version.outputs.should_publish == 'true'
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.version }}
+          USER_AGENT: loops-rs release workflow (github.com/${{ github.repository }})
+        run: |
+          # A re-run after the release/tag step failed recomputes the same
+          # version. Skip the upload only when crates.io holds this exact
+          # commit (cargo records it in .cargo_vcs_info.json); if another
+          # commit was published under this version, tag that commit instead
+          # and fail, so a re-run releases this one as the next version.
+          status=$(curl -s -o /dev/null -w '%{http_code}' -A "$USER_AGENT" \
+            "https://crates.io/api/v1/crates/loops-so/$NEW_VERSION")
+          if [ "$status" != "200" ]; then
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "release_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          published_sha=$(curl -sfL -A "$USER_AGENT" \
+            "https://static.crates.io/crates/loops-so/loops-so-$NEW_VERSION.crate" \
+            | tar -xzO "loops-so-$NEW_VERSION/.cargo_vcs_info.json" | jq -r '.git.sha1')
+          if [ -z "$published_sha" ] || [ "$published_sha" = "null" ]; then
+            echo "::error::loops-so $NEW_VERSION is on crates.io without a recorded commit; tag it by hand"
+            exit 1
+          fi
+          echo "published=true" >> "$GITHUB_OUTPUT"
+          echo "release_sha=$published_sha" >> "$GITHUB_OUTPUT"
+          if [ "$published_sha" = "$GITHUB_SHA" ]; then
+            echo "loops-so $NEW_VERSION is already on crates.io from this commit - skipping upload"
+          else
+            echo "mismatch=true" >> "$GITHUB_OUTPUT"
+            echo "loops-so $NEW_VERSION was published from $published_sha, not $GITHUB_SHA"
+          fi
+
+      - name: Authenticate with crates.io
+        id: auth
+        if: steps.version.outputs.should_publish == 'true' && steps.exists.outputs.published == 'false'
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish to crates.io
+        if: steps.version.outputs.should_publish == 'true' && steps.exists.outputs.published == 'false'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish --locked --allow-dirty
+
+      - name: Prepare OpenAPI spec
+        id: spec
+        if: steps.version.outputs.should_publish == 'true'
+        env:
+          RELEASE_SHA: ${{ steps.exists.outputs.release_sha }}
+        run: |
+          # The spec of the tagged commit, which differs from the checkout
+          # only when an earlier release is being recovered.
+          git show "$RELEASE_SHA:src/openapi.yaml" > openapi.release.yml
+          API=$(grep -m1 '^  version:' openapi.release.yml | awk '{print $2}')
+          mv openapi.release.yml "openapi.$API.yml"
+          echo "api_version=$API" >> "$GITHUB_OUTPUT"
+          echo "Attaching the shipped OpenAPI spec as openapi.$API.yml"
+
+      - name: Create GitHub Release
+        if: steps.version.outputs.should_publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          # Tag the commit that was packaged, not whatever main points at by
+          # now: a merge landing mid-run would otherwise get this tag and be
+          # skipped as "already released".
+          target_commitish: ${{ steps.exists.outputs.release_sha }}
+          name: Release v${{ steps.version.outputs.version }}
+          body: |
+            ## loops-so v${{ steps.version.outputs.version }}
+
+            Built against Loops API version ${{ steps.spec.outputs.api_version }}.
+
+            ### Installation
+            ```bash
+            cargo add loops-so@${{ steps.version.outputs.version }}
+            ```
+
+            See [Loops API Documentation](https://loops.so/docs) for usage details.
+          files: |
+            openapi.${{ steps.spec.outputs.api_version }}.yml
+          draft: false
+          prerelease: false
+
+      - name: Ask for a re-run after recovering an earlier release
+        if: steps.exists.outputs.mismatch == 'true'
+        run: |
+          echo "::error::v${{ steps.version.outputs.version }} now tags ${{ steps.exists.outputs.release_sha }}, the commit crates.io holds. Re-run this workflow to release ${{ github.sha }} as the next version."
+          exit 1

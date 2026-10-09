@@ -1,0 +1,72 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # rustup installs the toolchain pinned in rust-toolchain.toml on first use.
+      - name: Show toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install just
+        uses: extractions/setup-just@v3
+
+      - name: Lint, test, docs and feature matrix
+        run: just check
+
+      - name: Package
+        run: just build
+
+  generated:
+    # src/generated/ must be exactly what the pinned generator produces from
+    # the committed spec, so a hand edit or a stale regeneration fails here.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Show toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: true
+
+      - name: Install just
+        uses: extractions/setup-just@v3
+
+      - name: Install the pinned generator
+        run: |
+          want=$(just --evaluate oas3_gen_version)
+          have=$(oas3-gen --version 2>/dev/null | awk '{print $2}' || true)
+          if [ "$have" != "$want" ]; then just install; fi
+
+      - name: Regenerate from the committed spec
+        run: just regenerate
+
+      - name: Fail on drift
+        run: |
+          if ! git diff --exit-code -- src/ README.md; then
+            echo "::error::src/generated/ is out of date with src/openapi.yaml; run 'just regenerate' and commit the result"
+            exit 1
+          fi

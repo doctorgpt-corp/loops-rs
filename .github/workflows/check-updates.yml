@@ -1,0 +1,88 @@
+name: Check for Loops API Updates
+
+on:
+  schedule:
+    - cron: '0 4 * * *'  # Every day at 4 AM UTC
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-and-update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install just
+        uses: extractions/setup-just@v3
+
+      - name: Fetch OpenAPI spec and compare versions
+        id: compare
+        run: |
+          CURRENT=$(grep -m1 '^  version:' src/openapi.yaml | awk '{print $2}')
+          just fetch
+          LATEST=$(grep -m1 '^  version:' src/openapi.yaml | awk '{print $2}')
+          echo "current_version=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "api_version=$LATEST" >> "$GITHUB_OUTPUT"
+          if [ "$LATEST" != "$CURRENT" ]; then
+            echo "needs_update=true" >> "$GITHUB_OUTPUT"
+            echo "Loops API $CURRENT -> $LATEST: update needed"
+          else
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+            echo "Loops API $CURRENT: up to date"
+          fi
+
+      - name: Show toolchain
+        if: steps.compare.outputs.needs_update == 'true'
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Cache cargo
+        if: steps.compare.outputs.needs_update == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: true
+
+      - name: Install the pinned generator
+        if: steps.compare.outputs.needs_update == 'true'
+        run: |
+          want=$(just --evaluate oas3_gen_version)
+          have=$(oas3-gen --version 2>/dev/null | awk '{print $2}' || true)
+          if [ "$have" != "$want" ]; then just install; fi
+
+      - name: Regenerate SDK
+        if: steps.compare.outputs.needs_update == 'true'
+        # Rewrites src/generated/, LOOPS_API_VERSION and the README version from
+        # the spec fetched above, which ships with the crate.
+        run: just regenerate
+
+      - name: Create Pull Request
+        if: steps.compare.outputs.needs_update == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update SDK to Loops API version ${{ steps.compare.outputs.api_version }}"
+          title: "chore: update SDK to Loops API version ${{ steps.compare.outputs.api_version }}"
+          body: |
+            ## Automated SDK Update
+
+            This PR updates loops-so to Loops API version **${{ steps.compare.outputs.api_version }}**.
+
+            ### Changes
+            - Regenerated `src/generated/` and the shipped `src/openapi.yaml` from the latest OpenAPI specification
+            - Updated `LOOPS_API_VERSION` and the README from ${{ steps.compare.outputs.current_version }} to ${{ steps.compare.outputs.api_version }}
+
+            ### Verification
+            The hand-written client is not touched. Run `just check` locally (CI does not run on bot PRs)
+            and follow the `sdk-update` skill to repair the wrapper on top of this commit.
+
+            ---
+            *This PR was automatically generated*
+          branch: update-sdk-${{ steps.compare.outputs.api_version }}
+          delete-branch: true

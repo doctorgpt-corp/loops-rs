@@ -1,0 +1,74 @@
+[package]
+name = "loops-so"
+# The released version is computed from the git tags by publish.yml and is
+# never committed back; see CLAUDE.md "Versioning".
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+description = "Unofficial Rust SDK for the Loops.so email platform"
+license = "MIT"
+authors = ["zegerius <aram@askaletta.com>"]
+repository = "https://github.com/doctorgpt-corp/loops-rs"
+homepage = "https://github.com/doctorgpt-corp/loops-rs"
+documentation = "https://docs.rs/loops-so"
+readme = "README.md"
+keywords = ["loops", "email", "api", "sdk", "transactional"]
+categories = ["api-bindings", "email", "web-programming::http-client"]
+include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
+
+[workspace]
+members = [".", "xtask"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = ["rustls"]
+rustls = ["reqwest/rustls"]
+native-tls = ["reqwest/native-tls"]
+testing = ["dep:wiremock", "dep:tokio"]
+
+[dependencies]
+# Runtime dependencies of the generated code in src/generated/. Keep
+# oas3-gen-support pinned to the exact oas3-gen version in the justfile.
+anyhow = "1.0.100"
+chrono = { version = "0.4.42", default-features = false, features = ["std", "clock", "serde"] }
+http = "1.4"
+indexmap = { version = "2.14", features = ["serde"] }
+oas3-gen-support = "=0.28.0"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "query", "http2", "charset", "system-proxy"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.145", features = ["preserve_order"] }
+serde_with = { version = "3.21", features = ["base64", "chrono"] }
+validator = { version = "0.21", features = ["derive"] }
+
+# Hand-written layer.
+bytes = "1.10"
+thiserror = "2.0.21"
+uuid = { version = "1.27", features = ["v4"] }
+
+# `testing` feature.
+tokio = { version = "1.53", features = ["sync"], optional = true }
+wiremock = { version = "0.6.5", optional = true }
+
+[dev-dependencies]
+serde_yaml_ng = "0.10"
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "sync"] }
+
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+
+[[test]]
+name = "testing"
+required-features = ["testing"]
+
+[[test]]
+name = "safe_mode"
+required-features = ["testing"]
