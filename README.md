@@ -306,7 +306,7 @@ itself, see the [Loops.so API docs](https://loops.so/docs).
 
 ## Automated Updates
 
-This SDK is automatically updated to match the latest Loops.so API specification (current: **1.22.1**, also exposed as `loops_so::LOOPS_API_VERSION`).
+This SDK is automatically updated to match the latest Loops.so API specification (current: **1.22.4**, also exposed as `loops_so::LOOPS_API_VERSION`).
 
 The crate follows semver below 1.0: a release built on a new Loops API version
 bumps the minor version (regenerated models usually change shape, which is
