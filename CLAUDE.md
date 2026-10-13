@@ -129,7 +129,7 @@ Tests need no real API key: every request goes to a local wiremock server.
 
 ```
 tests/
-  testing.rs     # 190 tests — mock utility + every client method (happy path, body, 400/404/409/429, decode)
+  testing.rs     # 199 tests — mock utility + every client method (happy path, body, 400/404/409/429, decode)
   safe_mode.rs   # 24 tests  — safe mode email domain validation
   spec.rs        # 8 tests   - spec <-> generated client <-> Route table agreement, API version, generator pins
 src/             # 3 unit tests — base_url normalization, route matching, mock drop restores config
@@ -275,6 +275,10 @@ async fn sends() {
 | `get_campaign_metrics` | `GET /v1/campaigns/{id}/metrics` |
 | `get_transactional_template_metrics` | `GET /v1/transactional-emails/{id}/metrics` |
 | `get_workflow_node_metrics` | `GET /v1/workflows/{id}/nodes/{node_id}/metrics` |
+| `list_workflow_groups` | `GET /v1/workflow-groups` |
+| `get_workflow_group` | `GET /v1/workflow-groups/{id}` |
+| `create_workflow_group` | `POST /v1/workflow-groups` |
+| `update_workflow_group` | `POST /v1/workflow-groups/{id}` |
 
 The `Route` variant is the PascalCase name (`Route::Transactional`, `Route::DeleteWorkflowNodeRecursively`); `Route::from_name("transactional")` looks one up by name.
 

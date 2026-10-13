@@ -601,6 +601,7 @@ fn default_response(route: Route) -> (u16, Option<Value>) {
         | Route::ListAudienceSegments
         | Route::ListCampaignGroups
         | Route::ListTransactionalGroups
+        | Route::ListWorkflowGroups
         | Route::ListEventPatterns => ok(empty_page()),
         Route::GetCampaign => ok(campaign("Mock Campaign", TIMESTAMP, None)),
         Route::CreateCampaign => {
@@ -672,7 +673,10 @@ fn default_response(route: Route) -> (u16, Option<Value>) {
         | Route::UpdateCampaignGroup
         | Route::GetTransactionalGroup
         | Route::CreateTransactionalGroup
-        | Route::UpdateTransactionalGroup => ok(group()),
+        | Route::UpdateTransactionalGroup
+        | Route::GetWorkflowGroup
+        | Route::CreateWorkflowGroup
+        | Route::UpdateWorkflowGroup => ok(group()),
         Route::GetEventPattern | Route::GetEventPatternByName => ok(event_pattern()),
     }
 }

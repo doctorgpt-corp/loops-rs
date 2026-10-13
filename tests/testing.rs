@@ -663,6 +663,10 @@ const EXPECTED_ROUTE_NAMES: &[&str] = &[
     "get_campaign_metrics",
     "get_transactional_template_metrics",
     "get_workflow_node_metrics",
+    "list_workflow_groups",
+    "get_workflow_group",
+    "create_workflow_group",
+    "update_workflow_group",
 ];
 
 #[test]
@@ -2189,6 +2193,71 @@ async fn update_transactional_group() {
     );
 }
 
+#[tokio::test]
+async fn list_workflow_groups() {
+    let (mock, client) = setup().await;
+    assert_eq!(
+        client
+            .list_workflow_groups(Page::first().per_page(10).cursor("c1"))
+            .await
+            .unwrap()
+            .data,
+        [] as [loops_so::generated::GroupResponse; 0]
+    );
+    let request = &mock.calls(Route::ListWorkflowGroups).await[0];
+    assert_eq!(request.url.query(), Some("perPage=10&cursor=c1"));
+}
+
+#[tokio::test]
+async fn get_workflow_group() {
+    let (mock, client) = setup().await;
+    assert_eq!(
+        client.get_workflow_group("mock-group-id").await.unwrap().id,
+        "mock-group-id"
+    );
+    let request = &mock.calls(Route::GetWorkflowGroup).await[0];
+    assert_eq!(request.url.path(), "/api/v1/workflow-groups/mock-group-id");
+}
+
+#[tokio::test]
+async fn get_workflow_group_not_found() {
+    let (mock, client) = setup().await;
+    mock.respond_json(
+        Route::GetWorkflowGroup,
+        404,
+        json!({ "message": "Workflow group not found" }),
+    );
+    let err = client.get_workflow_group("missing").await.unwrap_err();
+    assert_api_error(&err, "Workflow group not found", 404);
+}
+
+#[tokio::test]
+async fn create_workflow_group() {
+    let (mock, client) = setup().await;
+    let result = client
+        .create_workflow_group("Onboarding", Some("desc"))
+        .await
+        .unwrap();
+    assert_eq!(result.id, "mock-group-id");
+    assert_eq!(
+        body(&mock, Route::CreateWorkflowGroup).await,
+        json!({ "name": "Onboarding", "description": "desc" })
+    );
+}
+
+#[tokio::test]
+async fn update_workflow_group() {
+    let (mock, client) = setup().await;
+    client
+        .update_workflow_group("mock-group-id", None, Some("new desc"))
+        .await
+        .unwrap();
+    assert_eq!(
+        body(&mock, Route::UpdateWorkflowGroup).await,
+        json!({ "description": "new desc" })
+    );
+}
+
 // ---------------------------------------------------------------------------
 // A 400 on every route surfaces as an API error carrying the message
 // ---------------------------------------------------------------------------
@@ -2263,6 +2332,10 @@ error_path_tests! {
     error_get_campaign_metrics: Route::GetCampaignMetrics => |c| c.get_campaign_metrics("x");
     error_get_transactional_template_metrics: Route::GetTransactionalTemplateMetrics => |c| c.get_transactional_template_metrics("x");
     error_get_workflow_node_metrics: Route::GetWorkflowNodeMetrics => |c| c.get_workflow_node_metrics("wf", "n1");
+    error_list_workflow_groups: Route::ListWorkflowGroups => |c| c.list_workflow_groups(Page::first());
+    error_get_workflow_group: Route::GetWorkflowGroup => |c| c.get_workflow_group("x");
+    error_create_workflow_group: Route::CreateWorkflowGroup => |c| c.create_workflow_group("x", None);
+    error_update_workflow_group: Route::UpdateWorkflowGroup => |c| c.update_workflow_group("x", Some("y"), None);
     error_list_contact_properties: Route::ListContactProperties => |c| c.list_contact_properties();
     error_list_mailing_lists: Route::ListMailingLists => |c| c.list_mailing_lists();
     error_list_sending_ips: Route::ListSendingIps => |c| c.list_sending_ips();
