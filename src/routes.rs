@@ -149,4 +149,8 @@ routes! {
     GetCampaignMetrics = ("get_campaign_metrics", Get, "/v1/campaigns/{id}/metrics"),
     GetTransactionalTemplateMetrics = ("get_transactional_template_metrics", Get, "/v1/transactional-emails/{id}/metrics"),
     GetWorkflowNodeMetrics = ("get_workflow_node_metrics", Get, "/v1/workflows/{id}/nodes/{node_id}/metrics"),
+    ListWorkflowGroups = ("list_workflow_groups", Get, "/v1/workflow-groups"),
+    GetWorkflowGroup = ("get_workflow_group", Get, "/v1/workflow-groups/{id}"),
+    CreateWorkflowGroup = ("create_workflow_group", Post, "/v1/workflow-groups"),
+    UpdateWorkflowGroup = ("update_workflow_group", Post, "/v1/workflow-groups/{id}"),
 }

@@ -2,11 +2,12 @@ use super::{LoopsClient, Page, check};
 use crate::error::Result;
 use crate::generated::{
     CreateCampaignGroupRequest, CreateCampaignGroupResponse, CreateGroupRequest,
-    CreateTransactionalGroupRequest, GetCampaignGroupRequest, GetCampaignGroupResponse,
-    GetTransactionalGroupRequest, GroupResponse, ListCampaignGroupsRequest,
-    ListCampaignGroupsRequestQuery, ListCampaignGroupsResponse, ListGroupsResponse,
-    ListTransactionalGroupsRequest, ListTransactionalGroupsRequestQuery,
-    UpdateCampaignGroupRequest, UpdateGroupRequest, UpdateTransactionalGroupRequest,
+    CreateTransactionalGroupRequest, CreateWorkflowGroupRequest, GetCampaignGroupRequest,
+    GetCampaignGroupResponse, GetTransactionalGroupRequest, GetWorkflowGroupRequest, GroupResponse,
+    ListCampaignGroupsRequest, ListCampaignGroupsRequestQuery, ListCampaignGroupsResponse,
+    ListGroupsResponse, ListTransactionalGroupsRequest, ListTransactionalGroupsRequestQuery,
+    ListWorkflowGroupsRequest, ListWorkflowGroupsRequestQuery, UpdateCampaignGroupRequest,
+    UpdateGroupRequest, UpdateTransactionalGroupRequest, UpdateWorkflowGroupRequest,
 };
 use crate::routes::Route;
 
@@ -175,6 +176,89 @@ impl LoopsClient {
             .await?;
         match raw
             .parse(ACTION, UpdateTransactionalGroupRequest::parse_response)
+            .await?
+        {
+            GetCampaignGroupResponse::Ok(group) => Ok(group),
+            _ => Err(raw.unexpected(ACTION)),
+        }
+    }
+
+    /// List workflow groups, most recently created first.
+    pub async fn list_workflow_groups(&self, page: Page) -> Result<ListGroupsResponse> {
+        const ACTION: &str = "list workflow groups";
+        let query = ListWorkflowGroupsRequestQuery {
+            per_page: page.per_page_param(),
+            cursor: page.cursor,
+        };
+        let raw = self
+            .send(Route::ListWorkflowGroups, &[], |r| r.query(&query))
+            .await?;
+        match raw
+            .parse(ACTION, ListWorkflowGroupsRequest::parse_response)
+            .await?
+        {
+            ListCampaignGroupsResponse::Ok(groups) => Ok(groups),
+            _ => Err(raw.unexpected(ACTION)),
+        }
+    }
+
+    /// Get a workflow group.
+    pub async fn get_workflow_group(&self, workflow_group_id: &str) -> Result<GroupResponse> {
+        const ACTION: &str = "get workflow group";
+        let raw = self
+            .send(Route::GetWorkflowGroup, &[workflow_group_id], |r| r)
+            .await?;
+        match raw
+            .parse(ACTION, GetWorkflowGroupRequest::parse_response)
+            .await?
+        {
+            GetCampaignGroupResponse::Ok(group) => Ok(group),
+            _ => Err(raw.unexpected(ACTION)),
+        }
+    }
+
+    /// Create a workflow group.
+    pub async fn create_workflow_group(
+        &self,
+        name: &str,
+        description: Option<&str>,
+    ) -> Result<GroupResponse> {
+        const ACTION: &str = "create workflow group";
+        let body = group_body(name, description);
+        check(&body)?;
+        let raw = self
+            .send(Route::CreateWorkflowGroup, &[], |r| r.json(&body))
+            .await?;
+        match raw
+            .parse(ACTION, CreateWorkflowGroupRequest::parse_response)
+            .await?
+        {
+            CreateCampaignGroupResponse::Ok(group) => Ok(group),
+            _ => Err(raw.unexpected(ACTION)),
+        }
+    }
+
+    /// Rename a workflow group and/or change its description.
+    ///
+    /// The reserved "Unsorted" group cannot be edited.
+    pub async fn update_workflow_group(
+        &self,
+        workflow_group_id: &str,
+        name: Option<&str>,
+        description: Option<&str>,
+    ) -> Result<GroupResponse> {
+        const ACTION: &str = "update workflow group";
+        let body = UpdateGroupRequest {
+            name: name.map(str::to_owned),
+            description: description.map(str::to_owned),
+        };
+        let raw = self
+            .send(Route::UpdateWorkflowGroup, &[workflow_group_id], |r| {
+                r.json(&body)
+            })
+            .await?;
+        match raw
+            .parse(ACTION, UpdateWorkflowGroupRequest::parse_response)
             .await?
         {
             GetCampaignGroupResponse::Ok(group) => Ok(group),
