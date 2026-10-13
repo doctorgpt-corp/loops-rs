@@ -129,7 +129,7 @@ Tests need no real API key: every request goes to a local wiremock server.
 
 ```
 tests/
-  testing.rs     # 199 tests — mock utility + every client method (happy path, body, 400/404/409/429, decode)
+  testing.rs     # 200 tests — mock utility + every client method (happy path, body, 400/404/409/429, decode)
   safe_mode.rs   # 24 tests  — safe mode email domain validation
   spec.rs        # 8 tests   - spec <-> generated client <-> Route table agreement, API version, generator pins
 src/             # 3 unit tests — base_url normalization, route matching, mock drop restores config

@@ -2198,12 +2198,40 @@ async fn list_workflow_groups() {
     let (mock, client) = setup().await;
     assert_eq!(
         client
-            .list_workflow_groups(Page::first().per_page(10).cursor("c1"))
+            .list_workflow_groups(Page::first())
             .await
             .unwrap()
             .data,
         [] as [loops_so::generated::GroupResponse; 0]
     );
+    assert!(mock.called(Route::ListWorkflowGroups).await);
+}
+
+#[tokio::test]
+async fn list_workflow_groups_paginates() {
+    let (mock, client) = setup().await;
+    mock.respond_json(
+        Route::ListWorkflowGroups,
+        200,
+        json!({
+            "pagination": {
+                "totalResults": 11, "returnedResults": 1, "perPage": 10, "totalPages": 2,
+                "nextCursor": "c2", "nextPage": null,
+            },
+            "data": [{
+                "id": "grp_1", "name": "Onboarding", "description": "",
+                "createdAt": "2024-01-01T00:00:00.000Z", "updatedAt": "2024-01-02T00:00:00.000Z",
+            }],
+        }),
+    );
+    let result = client
+        .list_workflow_groups(Page::first().per_page(10).cursor("c1"))
+        .await
+        .unwrap();
+    assert_eq!(result.pagination.next_cursor.as_deref(), Some("c2"));
+    assert_eq!(result.data.len(), 1);
+    assert_eq!(result.data[0].id, "grp_1");
+    assert_eq!(result.data[0].name, "Onboarding");
     let request = &mock.calls(Route::ListWorkflowGroups).await[0];
     assert_eq!(request.url.query(), Some("perPage=10&cursor=c1"));
 }
