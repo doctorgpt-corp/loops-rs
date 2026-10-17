@@ -7,7 +7,7 @@ use std::path::Path;
 
 /// The `info.version` of the shipped spec. `just generate` rewrites it
 /// together with the spec and the generated code.
-pub const LOOPS_API_VERSION: &str = "1.22.4";
+pub const LOOPS_API_VERSION: &str = "1.22.5";
 
 /// The shipped OpenAPI spec, as YAML.
 pub const OPENAPI_SPEC: &str = include_str!("openapi.yaml");
