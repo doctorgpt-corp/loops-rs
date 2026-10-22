@@ -472,6 +472,7 @@ fn workflow() -> Value {
         "status": "Draft",
         "name": "Mock Workflow",
         "description": null,
+        "workflowGroupId": "mock-workflow-group-id",
         "mailingListId": null,
         "rootNodeId": "mock-node-id",
         "nodes": {},
