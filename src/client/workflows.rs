@@ -1,7 +1,7 @@
 use serde_json::{Map, Value};
 
 use super::{LoopsClient, Page, check};
-use crate::error::Result;
+use crate::error::{LoopsError, Result};
 use crate::generated::{
     ChangeWorkflowMailingListRequestParams, ChangeWorkflowMailingListResponse,
     ChangeWorkflowMailingListResponseEnum, CreateWorkflowRequest, CreateWorkflowRequestParams,
@@ -48,17 +48,22 @@ impl LoopsClient {
 
     /// Create a draft workflow with a blank trigger and an exit node. Build
     /// out its graph with the workflow node methods.
+    ///
+    /// Without `workflow_group_id`, Loops files the workflow in the team's
+    /// Unsorted group.
     pub async fn create_workflow(
         &self,
         name: &str,
         description: Option<&str>,
         mailing_list_id: Option<&str>,
+        workflow_group_id: Option<&str>,
     ) -> Result<SimplifiedWorkflow> {
         const ACTION: &str = "create workflow";
         let body = CreateWorkflowRequest {
             name: name.to_owned(),
             description: description.map(str::to_owned),
             mailing_list_id: mailing_list_id.map(str::to_owned),
+            workflow_group_id: workflow_group_id.map(str::to_owned),
         };
         check(&body)?;
         let raw = self
@@ -73,7 +78,9 @@ impl LoopsClient {
         }
     }
 
-    /// Rename a workflow and/or change its description.
+    /// Rename a workflow, change its description, and/or move it to another
+    /// workflow group. At least one of the three must be `Some`, or the call
+    /// fails with [`LoopsError::InvalidInput`] before any request is sent.
     ///
     /// `expected_revision_id` is the optimistic concurrency token: pass the
     /// latest `workflow_revision_id`, or `None` for a workflow that has none
@@ -84,14 +91,23 @@ impl LoopsClient {
         expected_revision_id: Option<&str>,
         name: Option<&str>,
         description: Option<&str>,
+        workflow_group_id: Option<&str>,
     ) -> Result<SimplifiedWorkflow> {
         const ACTION: &str = "update workflow";
+        if name.is_none() && description.is_none() && workflow_group_id.is_none() {
+            return Err(LoopsError::InvalidInput(
+                "update_workflow requires name, description or workflow_group_id".to_owned(),
+            ));
+        }
         let mut body = revision_body(expected_revision_id);
         if let Some(name) = name {
             body.insert("name".to_owned(), Value::from(name));
         }
         if let Some(description) = description {
             body.insert("description".to_owned(), Value::from(description));
+        }
+        if let Some(workflow_group_id) = workflow_group_id {
+            body.insert("workflowGroupId".to_owned(), Value::from(workflow_group_id));
         }
         let raw = self
             .send(Route::UpdateWorkflow, &[workflow_id], |r| r.json(&body))

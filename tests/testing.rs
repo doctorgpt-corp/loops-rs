@@ -811,13 +811,14 @@ async fn responses_tolerate_fields_the_spec_does_not_list_yet() {
             "workflowRevisionId": "rev",
             "status": "Draft",
             "name": "Mock Workflow",
+            "workflowGroupId": "grp",
             "mailingListId": null,
             "rootNodeId": "n1",
             "nodes": { "n1": { "typeName": "ExitAction", "nextNodeIds": [], "addedLater": true } },
             "addedLater": { "nested": 1 },
         }),
     );
-    let workflow = client.create_workflow("x", None, None).await.unwrap();
+    let workflow = client.create_workflow("x", None, None, None).await.unwrap();
     assert_eq!(workflow.id, "mock-workflow-id");
 }
 
@@ -1517,6 +1518,29 @@ async fn list_workflows() {
 }
 
 #[tokio::test]
+async fn list_workflows_returns_group_id() {
+    let (mock, client) = setup().await;
+    mock.respond_json(
+        Route::ListWorkflows,
+        200,
+        json!({
+            "pagination": {
+                "totalResults": 1, "returnedResults": 1, "perPage": 20, "totalPages": 1,
+                "nextCursor": null, "nextPage": null,
+            },
+            "data": [{
+                "id": "wf_1", "url": "https://app.loops.so/workflows/wf_1",
+                "name": "Welcome series", "workflowGroupId": "grp_1",
+                "createdAt": "2024-01-01T00:00:00.000Z", "updatedAt": "2024-01-02T00:00:00.000Z",
+            }],
+        }),
+    );
+    let result = client.list_workflows(Page::first()).await.unwrap();
+    assert_eq!(result.data.len(), 1);
+    assert_eq!(result.data[0].workflow_group_id, "grp_1");
+}
+
+#[tokio::test]
 async fn list_workflows_rate_limit() {
     let (mock, client) = setup().await;
     mock.respond(Route::ListWorkflows, rate_limited("7"));
@@ -1533,6 +1557,7 @@ async fn get_workflow() {
         result.url,
         "https://app.loops.so/workflows/mock-workflow-id"
     );
+    assert_eq!(result.workflow_group_id, "mock-workflow-group-id");
 }
 
 #[tokio::test]
@@ -1548,6 +1573,7 @@ async fn get_workflow_decodes_each_node_by_type_name() {
             "status": "Draft",
             "name": "Onboarding",
             "description": null,
+            "workflowGroupId": "grp",
             "mailingListId": null,
             "rootNodeId": "n1",
             "nodes": {
@@ -1582,7 +1608,7 @@ async fn get_workflow_node_with_unknown_type_name_is_a_decode_error() {
     let mut workflow = loops_so::testing::wiremock::ResponseTemplate::new(200);
     workflow = workflow.set_body_json(json!({
         "id": "wf", "url": "u", "workflowRevisionId": null, "status": "Draft",
-        "name": "x", "mailingListId": null, "rootNodeId": "n1",
+        "name": "x", "workflowGroupId": "grp", "mailingListId": null, "rootNodeId": "n1",
         "nodes": { "n1": { "typeName": "Teleport", "nextNodeIds": [] } },
     }));
     mock.respond(Route::GetWorkflow, workflow);
@@ -1606,7 +1632,7 @@ async fn get_workflow_not_found() {
 async fn create_workflow() {
     let (mock, client) = setup().await;
     let result = client
-        .create_workflow("Onboarding", Some("desc"), Some("list-1"))
+        .create_workflow("Onboarding", Some("desc"), Some("list-1"), None)
         .await
         .unwrap();
     assert_eq!(result.id, "mock-workflow-id");
@@ -1620,15 +1646,37 @@ async fn create_workflow() {
 async fn create_workflow_rate_limit() {
     let (mock, client) = setup().await;
     mock.respond(Route::CreateWorkflow, rate_limited("10"));
-    let err = client.create_workflow("x", None, None).await.unwrap_err();
+    let err = client
+        .create_workflow("x", None, None, None)
+        .await
+        .unwrap_err();
     assert_rate_limit(&err, 10);
+}
+
+#[tokio::test]
+async fn create_workflow_in_group() {
+    let (mock, client) = setup().await;
+    client
+        .create_workflow("Onboarding", None, None, Some("grp_1"))
+        .await
+        .unwrap();
+    assert_eq!(
+        body(&mock, Route::CreateWorkflow).await,
+        json!({ "name": "Onboarding", "workflowGroupId": "grp_1" })
+    );
 }
 
 #[tokio::test]
 async fn update_workflow() {
     let (mock, client) = setup().await;
     let result = client
-        .update_workflow("mock-workflow-id", Some("rev-1"), Some("Renamed"), None)
+        .update_workflow(
+            "mock-workflow-id",
+            Some("rev-1"),
+            Some("Renamed"),
+            None,
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(result.id, "mock-workflow-id");
@@ -1642,13 +1690,58 @@ async fn update_workflow() {
 async fn update_workflow_sends_null_revision() {
     let (mock, client) = setup().await;
     client
-        .update_workflow("mock-workflow-id", None, None, Some("d"))
+        .update_workflow("mock-workflow-id", None, None, Some("d"), None)
         .await
         .unwrap();
     assert_eq!(
         body(&mock, Route::UpdateWorkflow).await,
         json!({ "expectedRevisionId": null, "description": "d" })
     );
+}
+
+#[tokio::test]
+async fn update_workflow_moves_group() {
+    let (mock, client) = setup().await;
+    client
+        .update_workflow("mock-workflow-id", Some("rev-1"), None, None, Some("grp_2"))
+        .await
+        .unwrap();
+    assert_eq!(
+        body(&mock, Route::UpdateWorkflow).await,
+        json!({ "expectedRevisionId": "rev-1", "workflowGroupId": "grp_2" })
+    );
+}
+
+#[tokio::test]
+async fn update_workflow_requires_a_field() {
+    let (mock, client) = setup().await;
+    let err = client
+        .update_workflow("mock-workflow-id", Some("rev-1"), None, None, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, LoopsError::InvalidInput(_)), "{err:?}");
+    assert!(!mock.called(Route::UpdateWorkflow).await);
+}
+
+#[tokio::test]
+async fn update_workflow_group_not_found() {
+    let (mock, client) = setup().await;
+    mock.respond_json(
+        Route::UpdateWorkflow,
+        400,
+        json!({ "message": "Workflow group not found" }),
+    );
+    let err = client
+        .update_workflow(
+            "mock-workflow-id",
+            Some("rev-1"),
+            None,
+            None,
+            Some("missing"),
+        )
+        .await
+        .unwrap_err();
+    assert_api_error(&err, "Workflow group not found", 400);
 }
 
 #[tokio::test]
@@ -2347,8 +2440,8 @@ error_path_tests! {
     error_list_event_patterns: Route::ListEventPatterns => |c| c.list_event_patterns(Page::first());
     error_get_event_pattern: Route::GetEventPattern => |c| c.get_event_pattern("x");
     error_get_event_pattern_by_name: Route::GetEventPatternByName => |c| c.get_event_pattern_by_name("signup");
-    error_create_workflow: Route::CreateWorkflow => |c| c.create_workflow("x", None, None);
-    error_update_workflow: Route::UpdateWorkflow => |c| c.update_workflow("wf", Some("rev"), Some("y"), None);
+    error_create_workflow: Route::CreateWorkflow => |c| c.create_workflow("x", None, None, None);
+    error_update_workflow: Route::UpdateWorkflow => |c| c.update_workflow("wf", Some("rev"), Some("y"), None, None);
     error_change_workflow_mailing_list: Route::ChangeWorkflowMailingList => |c| c.change_workflow_mailing_list("wf", Some("rev"), Some("list-id"), None, None);
     error_create_workflow_node: Route::CreateWorkflowNode => |c| c.create_workflow_node("wf", CreateWorkflowNodeTypeName::TimerAction, Some("rev"), NodePlacement::before("n1"));
     error_update_workflow_node: Route::UpdateWorkflowNode => |c| c.update_workflow_node("wf", "n1", Some("rev"), json!({ "typeName": "SignupTrigger" }));
